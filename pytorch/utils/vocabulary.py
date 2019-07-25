@@ -3,9 +3,15 @@ from collections import Counter, OrderedDict
 
 import torch
 
+
 class Vocab(object):
-    def __init__(self, special=[], min_freq=0, max_size=None, lower_case=True,
-                 delimiter=None, vocab_file=None):
+    def __init__(self,
+                 special=[],
+                 min_freq=0,
+                 max_size=None,
+                 lower_case=True,
+                 delimiter=None,
+                 vocab_file=None):
         self.counter = Counter()
         self.special = special
         self.min_freq = min_freq
@@ -26,7 +32,7 @@ class Vocab(object):
         else:
             symbols = line.split(self.delimiter)
 
-        if add_double_eos: # lm1b
+        if add_double_eos:  # lm1b
             return ['<S>'] + symbols + ['<S>']
         elif add_eos:
             return symbols + ['<eos>']
@@ -89,8 +95,12 @@ class Vocab(object):
             print('final vocab size {} from {} unique tokens'.format(
                 len(self), len(self.counter)))
 
-    def encode_file(self, path, ordered=False, verbose=False, add_eos=True,
-            add_double_eos=False):
+    def encode_file(self,
+                    path,
+                    ordered=False,
+                    verbose=False,
+                    add_eos=True,
+                    add_double_eos=False):
         if verbose: print('encoding file {} ...'.format(path))
         assert os.path.exists(path)
         encoded = []
@@ -98,8 +108,8 @@ class Vocab(object):
             for idx, line in enumerate(f):
                 if verbose and idx > 0 and idx % 500000 == 0:
                     print('    line {}'.format(idx))
-                symbols = self.tokenize(line, add_eos=add_eos,
-                    add_double_eos=add_double_eos)
+                symbols = self.tokenize(
+                    line, add_eos=add_eos, add_double_eos=add_double_eos)
                 encoded.append(self.convert_to_tensor(symbols))
 
         if ordered:
@@ -157,7 +167,8 @@ class Vocab(object):
         if exclude is None:
             return ' '.join([self.get_sym(idx) for idx in indices])
         else:
-            return ' '.join([self.get_sym(idx) for idx in indices if idx not in exclude])
+            return ' '.join(
+                [self.get_sym(idx) for idx in indices if idx not in exclude])
 
     def __len__(self):
         return len(self.idx2sym)

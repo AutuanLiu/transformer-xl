@@ -12,6 +12,10 @@ sys.path.append('utils')
 from proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from log_uniform_sampler import LogUniformSampler, sample_logits
 
+# https://jalammar.github.io/illustrated-transformer/
+
+# 和transformer的位置编码一样
+# https://github.com/fastai/fastai/blob/master/fastai/text/models/transformer.py
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
         super(PositionalEmbedding, self).__init__()
@@ -51,6 +55,9 @@ class PositionwiseFF(nn.Module):
         self.pre_lnorm = pre_lnorm
 
     def forward(self, inp):
+        # 两种策略
+        # 1 先对 位置编码做 layernorm --> FF --> res
+        # 2 FF --> res --> layernorm
         if self.pre_lnorm:
             ##### layer normalization + positionwise feed-forward
             core_out = self.CoreNet(self.layer_norm(inp))
@@ -67,8 +74,8 @@ class PositionwiseFF(nn.Module):
         return output
 
 class MultiHeadAttn(nn.Module):
-    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, 
-                 pre_lnorm=False):
+    # 同 transformer 的 multi-head attention
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, pre_lnorm=False):
         super(MultiHeadAttn, self).__init__()
 
         self.n_head = n_head
@@ -76,6 +83,8 @@ class MultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
+        # 只针对 transformer中出现的情况
+        # 要么是 self-attention 要么是 q, (k, v)
         self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
         self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
 
@@ -90,6 +99,7 @@ class MultiHeadAttn(nn.Module):
         self.pre_lnorm = pre_lnorm
 
     def forward(self, h, attn_mask=None, mems=None):
+        # 包含之前的记忆（通常使用拼接的手段实现）
         ##### multihead attention
         # [hlen x bsz x n_head x d_head]
 
@@ -111,7 +121,7 @@ class MultiHeadAttn(nn.Module):
 
         # [qlen x klen x bsz x n_head]
         attn_score = torch.einsum('ibnd,jbnd->ijbn', (head_q, head_k))
-        attn_score.mul_(self.scale)
+        attn_score.mul_(self.scale)  # 放缩
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
                 attn_score.masked_fill_(attn_mask[None,:,:,None], -float('inf'))
@@ -141,6 +151,8 @@ class MultiHeadAttn(nn.Module):
         return output
 
 class RelMultiHeadAttn(nn.Module):
+    # 论文中提到的相对位置 multi-head attention
+    # 记忆长度
     def __init__(self, n_head, d_model, d_head, dropout, dropatt=0,
                  tgt_len=None, ext_len=None, mem_len=None, pre_lnorm=False):
         super(RelMultiHeadAttn, self).__init__()
@@ -380,7 +392,7 @@ class DecoderLayer(nn.Module):
         super(DecoderLayer, self).__init__()
 
         self.dec_attn = MultiHeadAttn(n_head, d_model, d_head, dropout, **kwargs)
-        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, 
+        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout,
                                      pre_lnorm=kwargs.get('pre_lnorm'))
 
     def forward(self, dec_inp, dec_attn_mask=None, mems=None):
@@ -398,7 +410,7 @@ class RelLearnableDecoderLayer(nn.Module):
 
         self.dec_attn = RelLearnableMultiHeadAttn(n_head, d_model, d_head, dropout,
                                          **kwargs)
-        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, 
+        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout,
                                      pre_lnorm=kwargs.get('pre_lnorm'))
 
     def forward(self, dec_inp, r_emb, r_w_bias, r_bias, dec_attn_mask=None, mems=None):
@@ -417,7 +429,7 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
         self.dec_attn = RelPartialLearnableMultiHeadAttn(n_head, d_model,
                             d_head, dropout, **kwargs)
-        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout, 
+        self.pos_ff = PositionwiseFF(d_model, d_inner, dropout,
                                      pre_lnorm=kwargs.get('pre_lnorm'))
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
@@ -431,7 +443,7 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
 
 class AdaptiveEmbedding(nn.Module):
-    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, 
+    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1,
                  sample_softmax=False):
         super(AdaptiveEmbedding, self).__init__()
 
@@ -469,7 +481,7 @@ class AdaptiveEmbedding(nn.Module):
         else:
             param = next(self.parameters())
             inp_flat = inp.view(-1)
-            emb_flat = torch.zeros([inp_flat.size(0), self.d_proj], 
+            emb_flat = torch.zeros([inp_flat.size(0), self.d_proj],
                 dtype=param.dtype, device=param.device)
             for i in range(len(self.cutoffs)):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
@@ -494,11 +506,11 @@ class AdaptiveEmbedding(nn.Module):
 
 class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_layer, n_head, d_model, d_head, d_inner,
-                 dropout, dropatt, tie_weight=True, d_embed=None, 
+                 dropout, dropatt, tie_weight=True, d_embed=None,
                  div_val=1, tie_projs=[False], pre_lnorm=False,
-                 tgt_len=None, ext_len=None, mem_len=None, 
+                 tgt_len=None, ext_len=None, mem_len=None,
                  cutoffs=[], adapt_inp=False,
-                 same_length=False, attn_type=0, clamp_len=-1, 
+                 same_length=False, attn_type=0, clamp_len=-1,
                  sample_softmax=-1):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -509,7 +521,7 @@ class MemTransformerLM(nn.Module):
         self.n_head = n_head
         self.d_head = d_head
 
-        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs, 
+        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs,
                                           div_val=div_val)
 
         self.drop = nn.Dropout(dropout)
@@ -559,7 +571,7 @@ class MemTransformerLM(nn.Module):
 
         # use adaptive softmax (including standard softmax)
         else:
-            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model, 
+            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
                                                     cutoffs, div_val=div_val)
 
             if tie_weight:
@@ -661,7 +673,7 @@ class MemTransformerLM(nn.Module):
 
         hids = []
         if self.attn_type == 0: # default
-            pos_seq = torch.arange(klen-1, -1, -1.0, device=word_emb.device, 
+            pos_seq = torch.arange(klen-1, -1, -1.0, device=word_emb.device,
                                    dtype=word_emb.dtype)
             if self.clamp_len > 0:
                 pos_seq.clamp_(max=self.clamp_len)
@@ -797,10 +809,10 @@ if __name__ == '__main__':
         for d_embed in [200, 100]:
             model = MemTransformerLM(args.n_token, args.n_layer, args.n_head,
                             args.d_model, args.d_head, args.d_inner, args.dropout,
-                            dropatt=args.dropout, tie_weight=True, 
-                            d_embed=d_embed, div_val=div_val, 
+                            dropatt=args.dropout, tie_weight=True,
+                            d_embed=d_embed, div_val=div_val,
                             tie_projs=tie_projs, pre_lnorm=True,
-                            tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len, 
+                            tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
                             cutoffs=cutoffs, attn_type=0).to(device)
 
             print(sum(p.numel() for p in model.parameters()))
